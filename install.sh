@@ -50,10 +50,13 @@ if [ ! -f "$BUILD_BIN" ]; then
 fi
 
 # 2. Install Binary
+# Aggressively remove from common paths to avoid PATH shadowing issues
+rm -f "$HOME/.local/bin/$BINARY_NAME" "$HOME/.local/bin/$APP_NAME"
 mkdir -p "$INSTALL_BIN"
-rm -f "$INSTALL_BIN/$BINARY_NAME" "$INSTALL_BIN/$APP_NAME" # Force remove old versions
+rm -f "$INSTALL_BIN/$BINARY_NAME" "$INSTALL_BIN/$APP_NAME" # Force remove target location
 cp "$BUILD_BIN" "$INSTALL_BIN/$BINARY_NAME"
 echo "Installed binary to $INSTALL_BIN/$BINARY_NAME"
+
 
 # Verify installation matches build
 BUILT_HASH=$(md5sum "$BUILD_BIN" | awk '{print $1}')
