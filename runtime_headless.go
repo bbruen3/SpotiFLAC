@@ -1,4 +1,5 @@
 //go:build headless
+// +build headless
 
 package main
 
