@@ -102,3 +102,20 @@ echo "Refreshing desktop database..."
 update-desktop-database "$INSTALL_APPS" 2>/dev/null || true
 
 echo "Done! You strictly might need to log out/in or run 'r' in Hyprland/etc for the icon to appear."
+
+# Check for shadowing
+RESOLVED_BIN=$(command -v "$BINARY_NAME" || true)
+if [ -n "$RESOLVED_BIN" ] && [ "$RESOLVED_BIN" != "$INSTALL_BIN/$BINARY_NAME" ]; then
+    echo ""
+    echo "WARNING: The installed binary at $INSTALL_BIN/$BINARY_NAME is being shadowed!"
+    echo "Current '$BINARY_NAME' resolves to: $RESOLVED_BIN"
+    echo "Please remove the shadowing binary or fixing your PATH."
+fi
+
+RESOLVED_APP=$(command -v "$APP_NAME" || true)
+if [ -n "$RESOLVED_APP" ] && [ "$RESOLVED_APP" != "$INSTALL_BIN/$APP_NAME" ]; then
+    echo ""
+    echo "WARNING: The installed binary at $INSTALL_BIN/$APP_NAME is being shadowed!"
+    echo "Current '$APP_NAME' resolves to: $RESOLVED_APP"
+    echo "Please remove the shadowing binary manually (e.g., 'sudo rm $RESOLVED_APP')."
+fi
