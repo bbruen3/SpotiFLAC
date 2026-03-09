@@ -223,7 +223,7 @@ func (q *QobuzDownloader) DownloadFile(url, filepath string) error {
 	fmt.Println("Starting file download...")
 
 	downloadClient := &http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout: 0, // No overall timeout for large file downloads
 	}
 
 	resp, err := downloadClient.Get(url)

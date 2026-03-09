@@ -66,7 +66,7 @@ type LucidaStatusResponse struct {
 func NewAmazonDownloader() *AmazonDownloader {
 	return &AmazonDownloader{
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 0, // No overall timeout for large file downloads
 		},
 		regions:          []string{"us", "eu"},
 		apiCallResetTime: time.Now(),
@@ -213,7 +213,7 @@ func (a *AmazonDownloader) DownloadFromLucida(amazonURL, outputDir, quality stri
 	client := &http.Client{
 		Transport: tr,
 		Jar:       jar,
-		Timeout:   120 * time.Second,
+		Timeout:   0, // No overall timeout for large file downloads
 	}
 
 	userAgent := a.getRandomUserAgent()

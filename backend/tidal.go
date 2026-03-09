@@ -355,7 +355,9 @@ func (t *TidalDownloader) DownloadFile(url, filepath string) error {
 		return t.DownloadFromManifest(strings.TrimPrefix(url, "MANIFEST:"), filepath)
 	}
 
-	resp, err := t.client.Get(url)
+	// Use a client without a timeout for large file downloads
+	downloadClient := &http.Client{}
+	resp, err := downloadClient.Get(url)
 
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
@@ -391,7 +393,7 @@ func (t *TidalDownloader) DownloadFromManifest(manifestB64, outputPath string) e
 	}
 
 	client := &http.Client{
-		Timeout: 120 * time.Second,
+		Timeout: 0, // No overall timeout for large file downloads
 	}
 
 	if directURL != "" {

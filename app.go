@@ -9,6 +9,7 @@ import (
 
 	"path/filepath"
 	"regexp"
+	"sync"
 
 	"spotiflac/backend"
 	"strings"
@@ -22,11 +23,16 @@ func isValidISRC(isrc string) bool {
 }
 
 type App struct {
-	ctx context.Context
+	ctx             context.Context
+	backgroundTasks sync.WaitGroup
 }
 
 func NewApp() *App {
 	return &App{}
+}
+
+func (a *App) WaitBackgroundTasks() {
+	a.backgroundTasks.Wait()
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -66,7 +72,7 @@ type DownloadRequest struct {
 	Position             int    `json:"position,omitempty"`
 	UseAlbumTrackNumber  bool   `json:"use_album_track_number,omitempty"`
 	SpotifyID            string `json:"spotify_id,omitempty"`
-	EmbedLyrics          bool   `json:"embed_lyrics,omitempty"`
+EmbedLyrics          bool   `json:"embed_lyrics,omitempty"`
 	EmbedMaxQualityCover bool   `json:"embed_max_quality_cover,omitempty"`
 	ServiceURL           string `json:"service_url,omitempty"`
 	Duration             int    `json:"duration,omitempty"`
@@ -418,7 +424,9 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 	}
 
 	if !alreadyExists && req.SpotifyID != "" && req.EmbedLyrics && strings.HasSuffix(filename, ".flac") {
+		a.backgroundTasks.Add(1)
 		go func(filePath, spotifyID, trackName, artistName string) {
+			defer a.backgroundTasks.Done()
 			fmt.Printf("\n========== LYRICS FETCH START ==========\n")
 			fmt.Printf("Spotify ID: %s\n", spotifyID)
 			fmt.Printf("Track: %s\n", trackName)
@@ -480,7 +488,9 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 			backend.CompleteDownloadItem(itemID, filename, 0)
 		}
 
+		a.backgroundTasks.Add(1)
 		go func(fPath, track, artist, album, sID, cover, format string) {
+			defer a.backgroundTasks.Done()
 			quality := "Unknown"
 			durationStr := "--:--"
 

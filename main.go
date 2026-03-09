@@ -258,9 +258,19 @@ downloadLoop:
 		}(i, req)
 	}
 
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		app.WaitBackgroundTasks()
+		close(done)
+	}()
 
-	fmt.Printf("\nSummary: %d Success, %d Failed. Output dir: %s\n", successCount, failCount, finalOutputDir)
+	select {
+	case <-ctx.Done():
+		os.Exit(1)
+	case <-done:
+		fmt.Printf("\nSummary: %d Success, %d Failed. Output dir: %s\n", successCount, failCount, finalOutputDir)
+	}
 }
 
 func mapTrackToDownloadRequest(t backend.TrackMetadata) DownloadRequest {
@@ -282,6 +292,7 @@ func mapTrackToDownloadRequest(t backend.TrackMetadata) DownloadRequest {
 		Copyright:          t.Copyright,
 		Publisher:          t.Publisher,
 		Duration:           t.DurationMS,
+		EmbedLyrics:        true,
 	}
 }
 
@@ -302,6 +313,7 @@ func mapAlbumTrackToDownloadRequest(t backend.AlbumTrackMetadata, albumInfo back
 		SpotifyTotalTracks: t.TotalTracks,
 		SpotifyTotalDiscs:  t.TotalDiscs,
 		Duration:           t.DurationMS,
+		EmbedLyrics:        true,
 	}
 
 	// Fallback to album info if track info is missing some details
