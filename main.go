@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"bufio"
 
 	"spotiflac/backend"
 )
@@ -24,6 +25,7 @@ func main() {
 	// CLI Flags
 	setOutput := flag.String("set-output", "", "Set the default download directory")
 	outputDir := flag.String("o", "", "Output directory for this download")
+	folderFormat := flag.String("folder-format", "", "Optional folder structure template (e.g., '{artist}/{album}', '{album}'). Falls back to GUI config if not provided.")
 	delay := flag.Duration("delay", 500*time.Millisecond, "Delay between downloads (e.g., 500ms, 1s)")
 	concurrency := flag.Int("c", 3, "Number of concurrent downloads")
 
@@ -36,6 +38,11 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
+
+	if len(args) > 0 && args[0] == "conf" {
+		runInteractiveConfig(app)
+		return
+	}
 
 	// Handle Persistent Config Set
 	if *setOutput != "" {
@@ -66,7 +73,7 @@ func main() {
 		}
 
 		if len(validURLs) > 0 {
-			runCLI(app, validURLs, *outputDir, *delay, *concurrency)
+			runCLI(app, validURLs, *outputDir, *folderFormat, *delay, *concurrency)
 			return
 		}
 	}
@@ -104,7 +111,7 @@ func handleSetOutput(path string) {
 	fmt.Printf("Default download directory set to: %s\n", absPath)
 }
 
-func runCLI(app *App, spotifyURLs []string, outputDirOverride string, delay time.Duration, concurrency int) {
+func runCLI(app *App, spotifyURLs []string, outputDirOverride string, folderFormatOverride string, delay time.Duration, concurrency int) {
 	// Manually manage the app lifecycle for CLI mode: in the normal Wails GUI flow,
 	// Wails calls startup/shutdown for us and supplies the context; here we create
 	// a signal-aware context that cancels on interrupt/termination signals and invoke
@@ -166,7 +173,6 @@ func runCLI(app *App, spotifyURLs []string, outputDirOverride string, delay time
 
 	fmt.Printf("Queued %d tracks for download (Concurrency: %d, Delay: %v)...\n", len(tracksToDownload), concurrency, delay)
 
-	// Determine output directory once
 	finalOutputDir := backend.GetDefaultMusicPath()
 	if outputDirOverride != "" {
 		normalizedOverride := backend.NormalizePath(outputDirOverride)
@@ -175,6 +181,17 @@ func runCLI(app *App, spotifyURLs []string, outputDirOverride string, delay time
 			log.Fatalf("Failed to resolve absolute path for output directory override %q: %v", outputDirOverride, err)
 		}
 		finalOutputDir = absOverride
+	}
+
+	// Resolve folder template
+	folderFormat := folderFormatOverride
+	if folderFormat == "" {
+		settings, err := app.LoadSettings()
+		if err == nil && settings != nil {
+			if template, ok := settings["folderTemplate"].(string); ok && template != "" {
+				folderFormat = template
+			}
+		}
 	}
 
 	// Process downloads concurrently
@@ -213,7 +230,25 @@ downloadLoop:
 				time.Sleep(clampedDelay)
 			}
 
-			r.OutputDir = finalOutputDir
+			// Generate the subfolder path
+			subfolder := backend.BuildFolderPath(
+				folderFormat,
+				r.TrackName,
+				r.ArtistName,
+				r.AlbumName,
+				r.AlbumArtist,
+				r.ReleaseDate,
+				"", // Playlist (not natively fetched mapped here unless we expand)
+				r.Position,
+				r.SpotifyDiscNumber,
+			)
+
+			if subfolder != "" {
+				r.OutputDir = filepath.Join(finalOutputDir, subfolder)
+			} else {
+				r.OutputDir = finalOutputDir
+			}
+
 			if r.Service == "" {
 				r.Service = "tidal"
 			}
@@ -339,4 +374,97 @@ func mapAlbumTrackToDownloadRequest(t backend.AlbumTrackMetadata, albumInfo back
 	// fallback logic above to cover those scenarios.
 
 	return req
+}
+
+func runInteractiveConfig(app *App) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println("--- SpotiFLAC Interactive Configuration ---")
+
+	settings, err := app.LoadSettings()
+	if err != nil {
+		fmt.Printf("Error loading settings: %v\n", err)
+		return
+	}
+	if settings == nil {
+		settings = make(map[string]interface{})
+	}
+
+	// Option 1: Default Download Path
+	currentPath := ""
+	if p, ok := settings["downloadPath"].(string); ok {
+		currentPath = p
+	}
+	if currentPath == "" {
+		currentPath = backend.GetDefaultMusicPath()
+	}
+	fmt.Printf("1. Default Download Directory [%s]: ", currentPath)
+	pathInput, _ := reader.ReadString('\n')
+	pathInput = strings.TrimSpace(pathInput)
+
+	if pathInput != "" {
+		normalizedPath := backend.NormalizePath(pathInput)
+		absPath, err := filepath.Abs(normalizedPath)
+		if err == nil {
+			settings["downloadPath"] = absPath
+			currentPath = absPath
+		}
+	}
+
+	// Option 2: Folder Formatting
+	currentPreset := "none"
+	if p, ok := settings["folderPreset"].(string); ok && p != "" {
+		currentPreset = p
+	}
+	currentTemplate := ""
+	if t, ok := settings["folderTemplate"].(string); ok {
+		currentTemplate = t
+	}
+
+	fmt.Printf("\n2. Folder Preset [%s]\n", currentPreset)
+	fmt.Println("   1) none (No Subfolder)")
+	fmt.Println("   2) artist ({artist})")
+	fmt.Println("   3) album ({album})")
+	fmt.Println("   4) artist-album ({artist}/{album})")
+	fmt.Println("   5) custom")
+	fmt.Print("Select option (1-5) or press Enter to keep current: ")
+	
+	presetInput, _ := reader.ReadString('\n')
+	presetInput = strings.TrimSpace(presetInput)
+
+	switch presetInput {
+	case "1":
+		settings["folderPreset"] = "none"
+		settings["folderTemplate"] = ""
+	case "2":
+		settings["folderPreset"] = "artist"
+		settings["folderTemplate"] = "{artist}"
+	case "3":
+		settings["folderPreset"] = "album"
+		settings["folderTemplate"] = "{album}"
+	case "4":
+		settings["folderPreset"] = "artist-album"
+		settings["folderTemplate"] = "{artist}/{album}"
+	case "5":
+		settings["folderPreset"] = "custom"
+		fmt.Printf("Enter custom folder format (e.g. {artist}/{album}) [%s]: ", currentTemplate)
+		customInput, _ := reader.ReadString('\n')
+		customInput = strings.TrimSpace(customInput)
+		if customInput != "" {
+			settings["folderTemplate"] = customInput
+		}
+	}
+
+	err = app.SaveSettings(settings)
+	if err != nil {
+		fmt.Printf("\nFailed to save settings to config.json: %v\n", err)
+		return
+	}
+	
+	// Also sync downloadPath to history DB
+	if p, ok := settings["downloadPath"].(string); ok && p != "" {
+		backend.SetConfiguration("downloadPath", p)
+	}
+
+	fmt.Println("\nConfiguration saved successfully!")
 }

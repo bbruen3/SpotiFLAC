@@ -152,3 +152,44 @@ func sanitizeFolderName(name string) string {
 
 	return sanitizeFilename(name)
 }
+
+func BuildFolderPath(folderFormat, trackName, artistName, albumName, albumArtist, releaseDate, playlist string, position, discNumber int) string {
+	if folderFormat == "" {
+		return ""
+	}
+
+	safeTitle := sanitizeFolderName(trackName)
+	safeArtist := sanitizeFolderName(artistName)
+	safeAlbum := sanitizeFolderName(albumName)
+	safeAlbumArtist := sanitizeFolderName(albumArtist)
+	safePlaylist := sanitizeFolderName(playlist)
+
+	year := ""
+	if len(releaseDate) >= 4 {
+		year = releaseDate[:4]
+	}
+
+	folderPath := folderFormat
+	folderPath = strings.ReplaceAll(folderPath, "{title}", safeTitle)
+	folderPath = strings.ReplaceAll(folderPath, "{artist}", safeArtist)
+	folderPath = strings.ReplaceAll(folderPath, "{album}", safeAlbum)
+	folderPath = strings.ReplaceAll(folderPath, "{album_artist}", safeAlbumArtist)
+	folderPath = strings.ReplaceAll(folderPath, "{year}", year)
+	folderPath = strings.ReplaceAll(folderPath, "{playlist}", safePlaylist)
+
+	if discNumber > 0 {
+		folderPath = strings.ReplaceAll(folderPath, "{disc}", fmt.Sprintf("%d", discNumber))
+	} else {
+		folderPath = strings.ReplaceAll(folderPath, "{disc}", "")
+	}
+
+	if position > 0 {
+		folderPath = strings.ReplaceAll(folderPath, "{track}", fmt.Sprintf("%02d", position))
+	} else {
+		folderPath = regexp.MustCompile(`\{track\}\.\s*`).ReplaceAllString(folderPath, "")
+		folderPath = regexp.MustCompile(`\{track\}\s*-\s*`).ReplaceAllString(folderPath, "")
+		folderPath = regexp.MustCompile(`\{track\}\s*`).ReplaceAllString(folderPath, "")
+	}
+
+	return SanitizeFolderPath(folderPath)
+}
