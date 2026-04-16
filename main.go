@@ -309,6 +309,11 @@ downloadLoop:
 		os.Exit(1)
 	case <-done:
 		fmt.Printf("\nSummary: %d Success, %d Failed. Output dir: %s\n", successCount, failCount, finalOutputDir)
+		if failCount > 0 && successCount == 0 {
+			os.Exit(1)
+		} else if failCount > 0 {
+			os.Exit(2)
+		}
 	}
 }
 

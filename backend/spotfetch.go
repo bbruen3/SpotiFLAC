@@ -784,6 +784,7 @@ func FilterTrack(data map[string]interface{}, albumFetchData ...map[string]inter
 		"copyright": copyrightString,
 		"plays":     getString(trackData, "playcount"),
 		"cover":     cover,
+		"isrc":      getString(getMap(trackData, "externalIds"), "isrc"),
 	}
 
 	return filtered

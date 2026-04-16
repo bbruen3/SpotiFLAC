@@ -250,6 +250,7 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 
 			var trackResp struct {
 				Track struct {
+					ISRC        string `json:"isrc"`
 					Copyright   string `json:"copyright"`
 					Publisher   string `json:"publisher"`
 					TotalDiscs  int    `json:"total_discs"`
@@ -261,6 +262,9 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 			if jsonData, jsonErr := json.Marshal(trackData); jsonErr == nil {
 				if json.Unmarshal(jsonData, &trackResp) == nil {
 
+					if req.ISRC == "" && trackResp.Track.ISRC != "" {
+						req.ISRC = trackResp.Track.ISRC
+					}
 					if req.Copyright == "" && trackResp.Track.Copyright != "" {
 						req.Copyright = trackResp.Track.Copyright
 					}

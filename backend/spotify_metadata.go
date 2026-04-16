@@ -184,6 +184,7 @@ type apiTrackResponse struct {
 	Discs     int    `json:"discs"`
 	Copyright string `json:"copyright"`
 	Plays     string `json:"plays"`
+	ISRC      string `json:"isrc,omitempty"`
 	Album     struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
@@ -839,7 +840,7 @@ func (c *SpotifyMetadataClient) formatTrackData(raw *apiTrackResponse) TrackResp
 		DiscNumber:  raw.Disc,
 		TotalDiscs:  raw.Discs,
 		ExternalURL: externalURL,
-		ISRC:        raw.ID,
+		ISRC:        raw.ISRC,
 		Copyright:   raw.Copyright,
 		Publisher:   raw.Album.Label,
 		Plays:       raw.Plays,
@@ -897,7 +898,6 @@ func (c *SpotifyMetadataClient) formatAlbumData(raw *apiAlbumResponse) (*AlbumRe
 			DiscNumber:  1,
 			TotalDiscs:  0,
 			ExternalURL: fmt.Sprintf("https://open.spotify.com/track/%s", item.ID),
-			ISRC:        item.ID,
 			AlbumID:     raw.ID,
 			AlbumURL:    fmt.Sprintf("https://open.spotify.com/album/%s", raw.ID),
 			ArtistID:    artistID,
@@ -956,7 +956,6 @@ func (c *SpotifyMetadataClient) formatPlaylistData(raw *apiPlaylistResponse) Pla
 			DiscNumber:  1,
 			TotalDiscs:  0,
 			ExternalURL: fmt.Sprintf("https://open.spotify.com/track/%s", item.ID),
-			ISRC:        item.ID,
 			AlbumID:     item.AlbumID,
 			AlbumURL:    fmt.Sprintf("https://open.spotify.com/album/%s", item.AlbumID),
 			ArtistID:    artistID,
@@ -1059,7 +1058,6 @@ func (c *SpotifyMetadataClient) formatArtistDiscographyData(ctx context.Context,
 				TotalTracks: albumData.Count,
 				DiscNumber:  1,
 				ExternalURL: fmt.Sprintf("https://open.spotify.com/track/%s", tr.ID),
-				ISRC:        tr.ID,
 				AlbumID:     alb.ID,
 				AlbumURL:    fmt.Sprintf("https://open.spotify.com/album/%s", alb.ID),
 				ArtistID:    artistID,
