@@ -390,6 +390,22 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 		}
 		filename, err = downloader.DownloadByISRC(deezerISRC, req.OutputDir, quality, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
 
+	case "deezer":
+		downloader := backend.NewDeezerDownloader()
+		if req.ServiceURL != "" {
+			return DownloadResponse{
+				Success: false,
+				Error:   "ServiceURL is not supported for Deezer; provide a SpotifyID instead",
+			}, fmt.Errorf("ServiceURL not supported for Deezer")
+		}
+		if req.SpotifyID == "" {
+			return DownloadResponse{
+				Success: false,
+				Error:   "Spotify ID is required for Deezer",
+			}, fmt.Errorf("spotify ID is required for Deezer")
+		}
+		filename, err = downloader.DownloadBySpotifyID(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
+
 	default:
 		return DownloadResponse{
 			Success: false,
@@ -532,6 +548,50 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 		AlreadyExists: alreadyExists,
 		ItemID:        itemID,
 	}, nil
+}
+
+// DownloadTrackCascade tries each service in order, returning on the first
+// success. All attempts share a single queue entry — the itemID is generated
+// here so DownloadTrack's internal AddToQueue guard (if itemID == "") skips
+// on every subsequent attempt.
+func (a *App) DownloadTrackCascade(req DownloadRequest, services []string) (DownloadResponse, error) {
+	if req.ItemID == "" {
+		if req.SpotifyID != "" {
+			req.ItemID = fmt.Sprintf("%s-%d", req.SpotifyID, time.Now().UnixNano())
+		} else {
+			req.ItemID = fmt.Sprintf("%s-%s-%d", req.TrackName, req.ArtistName, time.Now().UnixNano())
+		}
+		backend.AddToQueue(req.ItemID, req.TrackName, req.ArtistName, req.AlbumName, req.SpotifyID)
+	}
+
+	cascade := len(services) > 1
+	var errs []string
+	for _, svc := range services {
+		if cascade {
+			fmt.Printf("[cascade] Trying %s...\n", svc)
+		}
+		r := req
+		r.Service = svc
+		resp, err := a.DownloadTrack(r)
+		if err == nil && resp.Success {
+			if cascade {
+				fmt.Printf("[cascade] Succeeded with %s\n", svc)
+			}
+			return resp, nil
+		}
+		msg := fmt.Sprintf("%s: %v", svc, err)
+		if cascade {
+			fmt.Printf("[cascade] Failed (%s)\n", msg)
+		}
+		errs = append(errs, msg)
+	}
+
+	combined := strings.Join(errs, "; ")
+	return DownloadResponse{
+		Success: false,
+		Error:   fmt.Sprintf("all services failed — %s", combined),
+		ItemID:  req.ItemID,
+	}, fmt.Errorf("all services failed: %s", combined)
 }
 
 func (a *App) OpenFolder(path string) error {

@@ -28,6 +28,7 @@ func main() {
 	folderFormat := flag.String("folder-format", "", "Optional folder structure template (e.g., '{artist}/{album}', '{album}'). Falls back to GUI config if not provided.")
 	delay := flag.Duration("delay", 500*time.Millisecond, "Delay between downloads (e.g., 500ms, 1s)")
 	concurrency := flag.Int("c", 3, "Number of concurrent downloads")
+	service := flag.String("service", "tidal", "Download service: tidal, qobuz, amazon, deezer")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -36,6 +37,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	services, svcErr := parseServices(*service)
+	if svcErr != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --service value: %v\n", svcErr)
+		os.Exit(1)
+	}
 
 	args := flag.Args()
 
@@ -73,7 +80,7 @@ func main() {
 		}
 
 		if len(validURLs) > 0 {
-			runCLI(app, validURLs, *outputDir, *folderFormat, *delay, *concurrency)
+			runCLI(app, validURLs, *outputDir, *folderFormat, *delay, *concurrency, services)
 			return
 		}
 	}
@@ -111,7 +118,7 @@ func handleSetOutput(path string) {
 	fmt.Printf("Default download directory set to: %s\n", absPath)
 }
 
-func runCLI(app *App, spotifyURLs []string, outputDirOverride string, folderFormatOverride string, delay time.Duration, concurrency int) {
+func runCLI(app *App, spotifyURLs []string, outputDirOverride string, folderFormatOverride string, delay time.Duration, concurrency int, services []string) {
 	// Manually manage the app lifecycle for CLI mode: in the normal Wails GUI flow,
 	// Wails calls startup/shutdown for us and supplies the context; here we create
 	// a signal-aware context that cancels on interrupt/termination signals and invoke
@@ -249,16 +256,13 @@ downloadLoop:
 				r.OutputDir = finalOutputDir
 			}
 
-			if r.Service == "" {
-				r.Service = "tidal"
-			}
 			if r.AudioFormat == "" {
 				r.AudioFormat = "LOSSLESS"
 			}
 
-			// Serialize DownloadTrack calls to avoid concurrent toggling of global download state.
+			// Serialize cascade calls to avoid concurrent toggling of global download state.
 			mu.Lock()
-			resp, err := app.DownloadTrack(r)
+			resp, err := app.DownloadTrackCascade(r, services)
 			mu.Unlock()
 
 			var resultMsg string
@@ -467,4 +471,29 @@ func runInteractiveConfig(app *App) {
 	}
 
 	fmt.Println("\nConfiguration saved successfully!")
+}
+
+// parseServices parses the --service flag value into an ordered slice of service
+// names. "auto" expands to the full default cascade order. A comma-separated list
+// (e.g. "deezer,tidal") is tried left-to-right. A single name is also valid.
+func parseServices(raw string) ([]string, error) {
+	if raw == "auto" {
+		raw = "tidal,deezer,amazon,qobuz"
+	}
+	known := map[string]bool{"tidal": true, "qobuz": true, "amazon": true, "deezer": true}
+	parts := strings.Split(raw, ",")
+	seen := map[string]bool{}
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if !known[p] {
+			return nil, fmt.Errorf("unknown service %q — valid values: tidal, qobuz, amazon, deezer, auto", p)
+		}
+		if seen[p] {
+			return nil, fmt.Errorf("duplicate service %q in list", p)
+		}
+		seen[p] = true
+		result = append(result, p)
+	}
+	return result, nil
 }
