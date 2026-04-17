@@ -26,6 +26,7 @@ type Metadata struct {
 	TotalTracks int
 	DiscNumber  int
 	TotalDiscs  int
+	ISRC        string
 	URL         string
 	Copyright   string
 	Publisher   string
@@ -75,6 +76,9 @@ func EmbedMetadata(filepath string, metadata Metadata, coverPath string) error {
 	}
 	if metadata.TotalDiscs > 0 {
 		_ = cmt.Add("TOTALDISCS", strconv.Itoa(metadata.TotalDiscs))
+	}
+	if metadata.ISRC != "" {
+		_ = cmt.Add("ISRC", metadata.ISRC)
 	}
 	if metadata.Copyright != "" {
 		_ = cmt.Add("COPYRIGHT", metadata.Copyright)
