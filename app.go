@@ -335,7 +335,7 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 					}, fmt.Errorf("spotify ID is required for Tidal")
 				}
 
-				filename, err = downloader.Download(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
+				filename, err = downloader.Download(req.SpotifyID, req.ISRC, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
 			}
 		} else {
 			downloader := backend.NewTidalDownloader(req.ApiURL)
@@ -350,7 +350,7 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 					}, fmt.Errorf("spotify ID is required for Tidal")
 				}
 
-				filename, err = downloader.Download(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
+				filename, err = downloader.Download(req.SpotifyID, req.ISRC, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
 			}
 		}
 
@@ -408,7 +408,7 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 				Error:   "Spotify ID is required for Deezer",
 			}, fmt.Errorf("spotify ID is required for Deezer")
 		}
-		filename, err = downloader.DownloadBySpotifyID(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
+		filename, err = downloader.DownloadBySpotifyID(req.SpotifyID, req.ISRC, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL)
 
 	default:
 		return DownloadResponse{
@@ -566,6 +566,16 @@ func (a *App) DownloadTrackCascade(req DownloadRequest, services []string) (Down
 			req.ItemID = fmt.Sprintf("%s-%s-%d", req.TrackName, req.ArtistName, time.Now().UnixNano())
 		}
 		backend.AddToQueue(req.ItemID, req.TrackName, req.ArtistName, req.AlbumName, req.SpotifyID)
+	}
+
+	// Pre-fetch ISRC from Deezer if not already available, to bypass Odesli in the cascade.
+	if req.ISRC == "" && req.TrackName != "" && req.ArtistName != "" {
+		deezerClient := backend.NewDeezerDownloader()
+		_, isrc, searchErr := deezerClient.SearchTrackForISRC(req.ArtistName, req.TrackName)
+		if searchErr == nil && isrc != "" {
+			req.ISRC = isrc
+			fmt.Printf("Pre-fetched ISRC via Deezer: %s\n", isrc)
+		}
 	}
 
 	cascade := len(services) > 1

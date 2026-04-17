@@ -174,6 +174,50 @@ func (t *TidalDownloader) GetAccessToken() (string, error) {
 	return result.AccessToken, nil
 }
 
+// GetTidalURLFromISRC resolves an ISRC to a Tidal track URL using the Tidal v1 API
+// and the same client-credentials bearer token, bypassing Odesli entirely.
+func (t *TidalDownloader) GetTidalURLFromISRC(isrc string) (string, error) {
+	token, err := t.GetAccessToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	trackBase, _ := base64.StdEncoding.DecodeString("aHR0cHM6Ly9hcGkudGlkYWwuY29tL3YxL3RyYWNrcz9pc3JjPQ==")
+	apiURL := fmt.Sprintf("%s%s&countryCode=US", string(trackBase), isrc)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("Tidal ISRC lookup returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode Tidal ISRC response: %w", err)
+	}
+	if len(result.Items) == 0 {
+		return "", fmt.Errorf("no Tidal track found for ISRC %s", isrc)
+	}
+
+	tidalURL := fmt.Sprintf("https://tidal.com/browse/track/%d", result.Items[0].ID)
+	fmt.Printf("Found Tidal URL via ISRC: %s\n", tidalURL)
+	return tidalURL, nil
+}
+
 func (t *TidalDownloader) GetTidalURLFromSpotify(spotifyTrackID string) (string, error) {
 
 	spotifyBase, _ := base64.StdEncoding.DecodeString("aHR0cHM6Ly9vcGVuLnNwb3RpZnkuY29tL3RyYWNrLw==")
@@ -732,11 +776,26 @@ func (t *TidalDownloader) DownloadByURLWithFallback(tidalURL, outputDir, quality
 	return outputFilename, nil
 }
 
-func (t *TidalDownloader) Download(spotifyTrackID, outputDir, quality, filenameFormat string, includeTrackNumber bool, position int, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate string, useAlbumTrackNumber bool, spotifyCoverURL string, embedMaxQualityCover bool, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks int, spotifyTotalDiscs int, spotifyCopyright, spotifyPublisher, spotifyURL string) (string, error) {
-
-	tidalURL, err := t.GetTidalURLFromSpotify(spotifyTrackID)
-	if err != nil {
-		return "", fmt.Errorf("songlink couldn't find Tidal URL: %w", err)
+// Download resolves a Spotify track ID to a Tidal URL and downloads it.
+// If isrc is non-empty the Tidal URL is resolved via the Tidal v1 ISRC endpoint,
+// bypassing Odesli; Odesli is used as a fallback when the ISRC lookup fails.
+func (t *TidalDownloader) Download(spotifyTrackID, isrc, outputDir, quality, filenameFormat string, includeTrackNumber bool, position int, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate string, useAlbumTrackNumber bool, spotifyCoverURL string, embedMaxQualityCover bool, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks int, spotifyTotalDiscs int, spotifyCopyright, spotifyPublisher, spotifyURL string) (string, error) {
+	var tidalURL string
+	var err error
+	if isrc != "" {
+		tidalURL, err = t.GetTidalURLFromISRC(isrc)
+		if err != nil {
+			fmt.Printf("ISRC lookup failed (%v), falling back to Odesli...\n", err)
+			tidalURL, err = t.GetTidalURLFromSpotify(spotifyTrackID)
+			if err != nil {
+				return "", fmt.Errorf("songlink couldn't find Tidal URL: %w", err)
+			}
+		}
+	} else {
+		tidalURL, err = t.GetTidalURLFromSpotify(spotifyTrackID)
+		if err != nil {
+			return "", fmt.Errorf("songlink couldn't find Tidal URL: %w", err)
+		}
 	}
 
 	return t.DownloadByURLWithFallback(tidalURL, outputDir, quality, filenameFormat, includeTrackNumber, position, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate, useAlbumTrackNumber, spotifyCoverURL, embedMaxQualityCover, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks, spotifyTotalDiscs, spotifyCopyright, spotifyPublisher, spotifyURL)

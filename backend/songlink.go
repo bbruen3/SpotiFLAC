@@ -80,6 +80,7 @@ func (s *SongLinkClient) GetAllURLsFromSpotify(spotifyTrackID string) (*SongLink
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 	fmt.Println("Getting streaming URLs from song.link...")
 
@@ -199,6 +200,7 @@ func (s *SongLinkClient) CheckTrackAvailability(spotifyTrackID string, isrc stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 	fmt.Printf("Checking availability for track: %s\n", spotifyTrackID)
 
@@ -351,6 +353,7 @@ func (s *SongLinkClient) GetDeezerURLFromSpotify(spotifyTrackID string) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 	fmt.Println("Getting Deezer URL from song.link...")
 

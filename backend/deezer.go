@@ -49,6 +49,106 @@ func (d *DeezerDownloader) extractData(html string, patterns []string) string {
 	return ""
 }
 
+// SearchTrackForISRC finds the Deezer URL and ISRC for a track via the public Deezer
+// search API (no auth, no Odesli). The search uses artist + title; the first result's
+// track detail is fetched to obtain the canonical ISRC.
+func (d *DeezerDownloader) SearchTrackForISRC(artist, title string) (deezerURL, isrc string, err error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	searchURL := fmt.Sprintf("https://api.deezer.com/search?q=%s&limit=1",
+		url.QueryEscape(artist+" "+title))
+
+	resp, err := client.Get(searchURL)
+	if err != nil {
+		return "", "", fmt.Errorf("deezer search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("deezer search returned status %d", resp.StatusCode)
+	}
+
+	var searchResp struct {
+		Data []struct {
+			ID   int64  `json:"id"`
+			Link string `json:"link"`
+		} `json:"data"`
+		Total int `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return "", "", fmt.Errorf("failed to decode deezer search response: %w", err)
+	}
+	if len(searchResp.Data) == 0 {
+		return "", "", fmt.Errorf("no deezer results for %q by %q", title, artist)
+	}
+
+	trackID := searchResp.Data[0].ID
+	deezerURL = searchResp.Data[0].Link
+
+	// Fetch full track detail to get the ISRC (not included in search results).
+	detailResp, err := client.Get(fmt.Sprintf("https://api.deezer.com/track/%d", trackID))
+	if err != nil {
+		// Return the URL even without ISRC.
+		return deezerURL, "", nil
+	}
+	defer detailResp.Body.Close()
+
+	var detail struct {
+		ID   int64  `json:"id"`
+		ISRC string `json:"isrc"`
+		Link string `json:"link"`
+	}
+	if err := json.NewDecoder(detailResp.Body).Decode(&detail); err != nil {
+		return deezerURL, "", nil
+	}
+	if detail.Link != "" {
+		deezerURL = detail.Link
+	}
+	return deezerURL, detail.ISRC, nil
+}
+
+// GetDeezerURLFromISRC resolves an ISRC directly to a Deezer URL using the public
+// Deezer API, bypassing Odesli entirely.
+func (d *DeezerDownloader) GetDeezerURLFromISRC(isrc string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	apiURL := fmt.Sprintf("https://api.deezer.com/2.0/track/isrc:%s", isrc)
+
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to call Deezer ISRC API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("Deezer ISRC API returned status %d", resp.StatusCode)
+	}
+
+	var track struct {
+		ID    int64  `json:"id"`
+		Link  string `json:"link"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&track); err != nil {
+		return "", fmt.Errorf("failed to decode Deezer ISRC response: %w", err)
+	}
+	if track.Error != nil {
+		return "", fmt.Errorf("Deezer ISRC API error: %s", track.Error.Message)
+	}
+	if track.Link == "" && track.ID == 0 {
+		return "", fmt.Errorf("no Deezer track found for ISRC %s", isrc)
+	}
+	if track.Link != "" {
+		fmt.Printf("Found Deezer URL via ISRC: %s\n", track.Link)
+		return track.Link, nil
+	}
+	url := fmt.Sprintf("https://www.deezer.com/track/%d", track.ID)
+	fmt.Printf("Found Deezer URL via ISRC: %s\n", url)
+	return url, nil
+}
+
 // GetDeezerURLFromSpotify resolves a Spotify track ID to a Deezer URL via song.link.
 func (d *DeezerDownloader) GetDeezerURLFromSpotify(spotifyTrackID string) (string, error) {
 	return NewSongLinkClient().GetDeezerURLFromSpotify(spotifyTrackID)
@@ -242,7 +342,9 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 
 // DownloadBySpotifyID is the main entry point: resolves the Spotify ID to a Deezer URL,
 // downloads via lucida.to, renames the file, and embeds Spotify metadata.
-func (d *DeezerDownloader) DownloadBySpotifyID(spotifyTrackID, outputDir, quality, filenameFormat string, includeTrackNumber bool, position int, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate string, useAlbumTrackNumber bool, spotifyCoverURL string, embedMaxQualityCover bool, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks int, spotifyTotalDiscs int, spotifyCopyright, spotifyPublisher, spotifyURL string) (string, error) {
+// If isrc is non-empty the Deezer URL is resolved directly via the Deezer public API,
+// bypassing Odesli; Odesli is used as a fallback when the ISRC lookup fails.
+func (d *DeezerDownloader) DownloadBySpotifyID(spotifyTrackID, isrc, outputDir, quality, filenameFormat string, includeTrackNumber bool, position int, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate string, useAlbumTrackNumber bool, spotifyCoverURL string, embedMaxQualityCover bool, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks int, spotifyTotalDiscs int, spotifyCopyright, spotifyPublisher, spotifyURL string) (string, error) {
 	if outputDir != "." {
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return "", fmt.Errorf("failed to create output directory: %w", err)
@@ -259,9 +361,22 @@ func (d *DeezerDownloader) DownloadBySpotifyID(spotifyTrackID, outputDir, qualit
 		}
 	}
 
-	deezerURL, err := d.GetDeezerURLFromSpotify(spotifyTrackID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get Deezer URL: %w", err)
+	var deezerURL string
+	var err error
+	if isrc != "" {
+		deezerURL, err = d.GetDeezerURLFromISRC(isrc)
+		if err != nil {
+			fmt.Printf("ISRC lookup failed (%v), falling back to Odesli...\n", err)
+			deezerURL, err = d.GetDeezerURLFromSpotify(spotifyTrackID)
+			if err != nil {
+				return "", fmt.Errorf("failed to get Deezer URL: %w", err)
+			}
+		}
+	} else {
+		deezerURL, err = d.GetDeezerURLFromSpotify(spotifyTrackID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get Deezer URL: %w", err)
+		}
 	}
 
 	fmt.Printf("Using Deezer URL: %s\n", deezerURL)
