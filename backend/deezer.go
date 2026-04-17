@@ -168,25 +168,62 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 		Timeout:   0,
 	}
 
-	userAgent := d.getRandomUserAgent()
+	// Obtain a Cloudflare-cleared session via FlareSolverr before touching lucida.
+	cfClearance, userAgent, err := getLucidaSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to obtain Cloudflare clearance: %w", err)
+	}
+
+	// Seed the cookie jar so CF doesn't challenge subsequent requests.
+	lucidaOrigin, _ := url.Parse("https://lucida.to")
+	jar.SetCookies(lucidaOrigin, []*http.Cookie{
+		{Name: "cf_clearance", Value: cfClearance, Path: "/", Domain: "lucida.to"},
+	})
 
 	// Step 1: Load the lucida landing page to extract token, stream URL, and token expiry.
 	fmt.Printf("Initializing lucida for Deezer... (Target: %s)\n", deezerURL)
 	lucidaBase, _ := base64.StdEncoding.DecodeString("aHR0cHM6Ly9sdWNpZGEudG8vP3VybD0lcyZjb3VudHJ5PWF1dG8=")
 	lucidaURL := fmt.Sprintf(string(lucidaBase), url.QueryEscape(deezerURL))
-	req, _ := http.NewRequest("GET", lucidaURL, nil)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 
-	resp, err := client.Do(req)
+	// doLandingGet issues the GET and returns (body, statusCode, error).
+	// It reads and closes the response body so the caller never needs to defer.
+	doLandingGet := func(ua string) (string, int, error) {
+		r, _ := http.NewRequest("GET", lucidaURL, nil)
+		r.Header.Set("User-Agent", ua)
+		r.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		r.Header.Set("Accept-Language", "en-US,en;q=0.5")
+		res, err := client.Do(r)
+		if err != nil {
+			return "", 0, err
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return string(b), res.StatusCode, nil
+	}
+
+	html, statusCode, err := doLandingGet(userAgent)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	html := string(bodyBytes)
+	// If Cloudflare is still blocking, invalidate the cache and retry once.
+	if statusCode == 403 && strings.Contains(html, "Just a moment") {
+		fmt.Println("[FlareSolverr] CF block on landing page — refreshing clearance and retrying...")
+		cfClearance, userAgent, err = refreshLucidaSession()
+		if err != nil {
+			return "", fmt.Errorf("CF re-solve failed: %w", err)
+		}
+		jar.SetCookies(lucidaOrigin, []*http.Cookie{
+			{Name: "cf_clearance", Value: cfClearance, Path: "/", Domain: "lucida.to"},
+		})
+		html, statusCode, err = doLandingGet(userAgent)
+		if err != nil {
+			return "", err
+		}
+		if statusCode == 403 {
+			return "", fmt.Errorf("Cloudflare challenge not bypassed after re-solve (HTTP %d)", statusCode)
+		}
+	}
 
 	token := d.extractData(html, []string{`token:"([^"]+)"`, `"token"\s*:\s*"([^"]+)"`})
 	streamURL := d.extractData(html, []string{`"url":"([^"]+)"`, `url:"([^"]+)"`})
@@ -197,6 +234,11 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 		if errorMsg != "" {
 			return "", fmt.Errorf("lucida error: %s", errorMsg)
 		}
+		snippet := html
+		if len(snippet) > 2000 {
+			snippet = snippet[:2000] + "\n...[truncated]"
+		}
+		fmt.Printf("[lucida] HTTP %d — response body (first 2000 bytes):\n%s\n", statusCode, snippet)
 		return "", fmt.Errorf("could not extract required data from lucida")
 	}
 
@@ -226,7 +268,7 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 
 	payloadBytes, _ := json.Marshal(loadPayload)
 	loadAPI, _ := base64.StdEncoding.DecodeString("aHR0cHM6Ly9sdWNpZGEudG8vYXBpL2xvYWQ/dXJsPS9hcGkvZmV0Y2gvc3RyZWFtL3Yy")
-	req, _ = http.NewRequest("POST", string(loadAPI), bytes.NewBuffer(payloadBytes))
+	req, _ := http.NewRequest("POST", string(loadAPI), bytes.NewBuffer(payloadBytes))
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, */*;q=0.5")
@@ -240,7 +282,7 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 		}
 	}
 
-	resp, err = client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -261,18 +303,18 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 
 	var finalStatus LucidaStatusResponse
 	for {
-		req, _ = http.NewRequest("GET", completionURL, nil)
-		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Accept", "application/json, */*;q=0.5")
-		req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-		req.Header.Set("Referer", "https://lucida.to/")
-		resp, err = client.Do(req)
+		pollReq, _ := http.NewRequest("GET", completionURL, nil)
+		pollReq.Header.Set("User-Agent", userAgent)
+		pollReq.Header.Set("Accept", "application/json, */*;q=0.5")
+		pollReq.Header.Set("Accept-Language", "en-US,en;q=0.5")
+		pollReq.Header.Set("Referer", "https://lucida.to/")
+		pollResp, err := client.Do(pollReq)
 		if err != nil {
 			return "", err
 		}
 
-		json.NewDecoder(resp.Body).Decode(&finalStatus)
-		resp.Body.Close()
+		json.NewDecoder(pollResp.Body).Decode(&finalStatus)
+		pollResp.Body.Close()
 
 		if finalStatus.Status == "completed" {
 			fmt.Println("\nTrack processing completed!")
@@ -289,23 +331,23 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 	// Step 4: Download the processed file.
 	downloadSuffix, _ := base64.StdEncoding.DecodeString("L2Rvd25sb2Fk")
 	downloadURL := fmt.Sprintf("%s%s%s%s%s", string(serviceBase), loadData.Server, string(completionBase), loadData.Handoff, string(downloadSuffix))
-	req, _ = http.NewRequest("GET", downloadURL, nil)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Referer", "https://lucida.to/")
-	resp, err = client.Do(req)
+	dlReq, _ := http.NewRequest("GET", downloadURL, nil)
+	dlReq.Header.Set("User-Agent", userAgent)
+	dlReq.Header.Set("Accept", "*/*")
+	dlReq.Header.Set("Referer", "https://lucida.to/")
+	dlResp, err := client.Do(dlReq)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer dlResp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("lucida download failed with status %d", resp.StatusCode)
+	if dlResp.StatusCode != 200 {
+		return "", fmt.Errorf("lucida download failed with status %d", dlResp.StatusCode)
 	}
 
 	// Derive filename from Content-Disposition, falling back to a safe default.
 	fileName := "track.flac"
-	if contentDisp := resp.Header.Get("Content-Disposition"); contentDisp != "" {
+	if contentDisp := dlResp.Header.Get("Content-Disposition"); contentDisp != "" {
 		re := regexp.MustCompile(`filename[*]?=([^;]+)`)
 		if matches := re.FindStringSubmatch(contentDisp); len(matches) > 1 {
 			rawName := strings.Trim(matches[1], `"'`)
@@ -330,7 +372,7 @@ func (d *DeezerDownloader) DownloadFromLucida(deezerURL, outputDir, quality stri
 
 	fmt.Printf("Downloading from Lucida: %s\n", fileName)
 	pw := NewProgressWriter(out)
-	if _, err = io.Copy(pw, resp.Body); err != nil {
+	if _, err = io.Copy(pw, dlResp.Body); err != nil {
 		out.Close()
 		os.Remove(filePath)
 		return "", fmt.Errorf("failed to write file: %w", err)
