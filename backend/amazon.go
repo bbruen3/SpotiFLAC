@@ -223,6 +223,8 @@ func (a *AmazonDownloader) DownloadFromLucida(amazonURL, outputDir, quality stri
 	lucidaURL := fmt.Sprintf(string(lucidaBase), url.QueryEscape(amazonURL))
 	req, _ := http.NewRequest("GET", lucidaURL, nil)
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -269,6 +271,10 @@ func (a *AmazonDownloader) DownloadFromLucida(amazonURL, outputDir, quality stri
 	req, _ = http.NewRequest("POST", string(loadAPI), bytes.NewBuffer(payloadBytes))
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, */*;q=0.5")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	req.Header.Set("Origin", "https://lucida.to")
+	req.Header.Set("Referer", lucidaURL)
 
 	for _, cookie := range client.Jar.Cookies(req.URL) {
 		if cookie.Name == "csrf_token" {
@@ -298,6 +304,9 @@ func (a *AmazonDownloader) DownloadFromLucida(amazonURL, outputDir, quality stri
 	for {
 		req, _ = http.NewRequest("GET", completionURL, nil)
 		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Accept", "application/json, */*;q=0.5")
+		req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+		req.Header.Set("Referer", "https://lucida.to/")
 		resp, err = client.Do(req)
 		if err != nil {
 			return "", err
@@ -322,6 +331,8 @@ func (a *AmazonDownloader) DownloadFromLucida(amazonURL, outputDir, quality stri
 	downloadURL := fmt.Sprintf("%s%s%s%s%s", string(serviceBase), loadData.Server, string(completionBase), loadData.Handoff, string(downloadSuffix))
 	req, _ = http.NewRequest("GET", downloadURL, nil)
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Referer", "https://lucida.to/")
 	resp, err = client.Do(req)
 	if err != nil {
 		return "", err
